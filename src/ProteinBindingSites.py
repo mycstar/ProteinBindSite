@@ -6,7 +6,7 @@ from math import sqrt
 import time
 import os
 import heapq
-import datetime
+from datetime import datetime
 
 dir_path = os.getcwd()
 
