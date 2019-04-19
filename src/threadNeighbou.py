@@ -44,7 +44,7 @@ aminoAcidCodes = ["ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLY", "GLU", "HIS",
                   "MET", "PHE", "PRO", "PYL", "SER", "SEC", "THR", "TRP", "TYR", "TRP", "VAL"]
 
 neighhor_df = pd.DataFrame(columns=["proteinid", "chain", "aaid", "neighborid"])
-n_bigger = 5
+n_bigger = 10
 target_list = []
 start_time = datetime.now()
 
@@ -54,11 +54,11 @@ def threadCalc(fold, protein_list):
         pdbID = protein_list[eachRow][0]
         chainOrder = protein_list[eachRow][1]
         PDB = PDBList()
-        PDB.retrieve_pdb_file(pdb_code=pdbID, pdir="../pdb", file_format="pdb")
+        PDB.retrieve_pdb_file(pdb_code=pdbID, pdir="./pdb", file_format="pdb")
 
         protein_start_time = datetime.now()
         p = PDBParser()
-        structure = p.get_structure("X", "../pdb/pdb" + pdbID + ".ent")
+        structure = p.get_structure("X", "./pdb/pdb" + pdbID + ".ent")
         oneChain = pd.DataFrame(columns=["Seq", "Residue", "Center", "Direction"])
 
         if structure.header["resolution"] <= 3.0:
@@ -98,15 +98,16 @@ def threadCalc(fold, protein_list):
                             sum(list(map(lambda x: x * x, coordinatesSubstraction))))
                         # distanceMatrix.iloc[row, column] = sqrt(sum(list(map(lambda x: x * x, coordinatesSubstraction))))
 
-                row_list = list(distanceMatrix.iloc[row, :])
-                result = list(map(row_list.index, heapq.nsmallest(n_bigger, row_list)))
-                target_col = columns[result]
-                target_list.append(target_col)
-                neighhor_df.loc[len(neighhor_df)] = [pdbID, chain, row_index[row], str(target_col)]
+                for row in range(0, numResidue):
+                    row_list = list(distanceMatrix.iloc[row, :])
+                    result = list(map(row_list.index, heapq.nsmallest(n_bigger, row_list)))
+                    target_col = columns[result]
+                    target_list.append(target_col)
+                    neighhor_df.loc[len(neighhor_df)] = [pdbID, chain, row_index[row], str(target_col)]
 
         protein_end_time = datetime.now()
         print(pdbID, " Duration: {}".format(protein_end_time - protein_start_time))
-    neighhor_df.to_csv("../mid_result/" + fold + ".csv")
+    neighhor_df.to_csv("./mid_result/" + str(fold) + ".csv")
     print('  sub process %s finished  ' % fold)
 
 
@@ -117,22 +118,22 @@ def chunks(l, m):
         yield l[i:i + n]
 
 
-thread_size = 10
+thread_size = 50
 protein_list = np.array(uniqueList).tolist()
-kfold = StratifiedKFold(n_splits=thread_size, shuffle=False)
+#kfold = StratifiedKFold(n_splits=thread_size, shuffle=False)
 group_list = list(chunks(protein_list, thread_size))
 
 print('Parent process %s.' % os.getpid())
-p = Pool()
+#p = Pool()
 
 for fold, fold_list in enumerate(group_list):
     print(fold)
-    # threadCalc(fold, fold_list)
-    p.apply_async(threadCalc, args=(fold, fold_list))
+    threadCalc(fold, fold_list)
+    #p.apply_async(threadCalc, args=(fold, fold_list))
 
 print('Waiting for all subprocesses done...')
-p.close()
-p.join()
+#p.close()
+#p.join()
 print('All subprocesses done.')
 
 end_time = datetime.now()
