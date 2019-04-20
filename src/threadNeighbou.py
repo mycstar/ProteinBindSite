@@ -1,4 +1,5 @@
 from Bio.PDB import *
+from Bio.PDB.Polypeptide import *
 import urllib.request
 import numpy as np
 import pandas as pd
@@ -8,6 +9,7 @@ import os
 import math
 import heapq
 from datetime import datetime
+import vg
 from multiprocessing import Pool
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit, GroupKFold
 
@@ -43,13 +45,121 @@ backbone = ["N", "CA", "C", "O"]
 aminoAcidCodes = ["ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLY", "GLU", "HIS", "ILE", "LEU", "LYS",
                   "MET", "PHE", "PRO", "PYL", "SER", "SEC", "THR", "TRP", "TYR", "TRP", "VAL"]
 
-neighhor_df = pd.DataFrame(columns=["proteinid", "chain", "aaid", "neighborid"])
+# neighhor_df = pd.DataFrame(columns=["proteinid", "chain", "aaid", "neighborid"])
 n_bigger = 10
 target_list = []
 start_time = datetime.now()
 
 
 def threadCalc(fold, protein_list):
+    final_list = []
+    pos = 0
+    neg = 0
+    for eachRow in range(0, len(protein_list)):
+        pdbID = protein_list[eachRow][0]
+        chainOrder = protein_list[eachRow][1]
+        PDB = PDBList()
+        PDB.retrieve_pdb_file(pdb_code=pdbID, pdir="./pdb", file_format="pdb")
+
+        protein_start_time = datetime.now()
+        p = PDBParser()
+        structure = p.get_structure("X", "./pdb/pdb" + pdbID + ".ent")
+        oneChain = pd.DataFrame(columns=["Seq", "Residue", "Center", "Direction"])
+
+        if structure.header["resolution"] <= 3.0:
+            if chainOrder in [x.id for x in list(structure[0].get_chains())]:
+                chain = chainOrder
+                for residue in structure[0][chainOrder]:
+                    if residue.get_resname() in aminoAcidCodes:
+                        if len(list(residue.get_atoms())) > 3:
+                            if residue.get_resname() != "GLY":
+                                point = vectors.Vector([0, 0, 0])
+                                for atom in residue:
+                                    if (atom.get_name() not in backbone):
+                                        point = point + atom.get_vector()
+                                center = point.__div__(len(residue) - 4)
+                                cToRGroup = residue["CA"].get_vector() - center
+                                oneChain.loc[len(oneChain)] = [residue.get_id()[1], residue.get_resname(), center,
+                                                               cToRGroup]
+                            else:
+                                center = residue["CA"].get_vector()
+                                cToRGroup = center - (residue["C"].get_vector() + residue["N"].get_vector() + residue[
+                                    "O"].get_vector()).__div__(3)
+                                oneChain.loc[len(oneChain)] = [residue.get_id()[1], residue.get_resname(), center,
+                                                               cToRGroup]
+
+                columns = np.array(list(oneChain.iloc[:, 0]))
+                row_index = oneChain.iloc[:, 0]
+
+                distanceMatrix = pd.DataFrame(columns=list(oneChain.iloc[:, 0]), index=list(oneChain.iloc[:, 0]))
+                print(time.time())
+                numResidue = len(oneChain)
+                for row in range(0, numResidue):
+                    if row % 50 == 0:
+                        print(str(row) + "th row")
+                    for column in range(0, numResidue):
+                        coordinatesSubstraction = list(oneChain.loc[row, "Center"] - oneChain.loc[column, "Center"])
+                        distanceMatrix.iloc[row, column] = sqrt(
+                            sum(list(map(lambda x: x * x, coordinatesSubstraction))))
+                        # distanceMatrix.iloc[row, column] = sqrt(sum(list(map(lambda x: x * x, coordinatesSubstraction))))
+
+                for row in range(0, numResidue):
+                    row_list = list(distanceMatrix.iloc[row, :])
+                    result = list(map(row_list.index, heapq.nsmallest(n_bigger, row_list)))
+                    n_near_index = columns[result]
+                    # target_list.append(target_col)
+
+                    residue = oneChain.loc[row]
+
+                    single_residue = [pdbID, chain, row_index[row], three_to_one(residue[1])]
+
+                    #single_residue.extend(n_near_index)
+                    neighbou_name = []
+
+                    for near in n_near_index:
+                        near_res = oneChain[oneChain['Seq'] == near]
+                        near_res_name = near_res.iloc[0, 1]
+                        near_res_rgroup = near_res.iloc[0, 3]
+
+                        if row_index[row] == near:
+                            angles = 0
+                        else:
+                            angles = vg.angle(np.asarray(list(residue[3])), np.asarray(list(near_res_rgroup)),
+                                              units='rad')
+
+                        neighbou_name.append(three_to_one(near_res_name))
+                        single_residue.append(angles)
+
+                    single_residue.extend(neighbou_name)
+                    single_residue.extend(n_near_index)
+                    single_residue.extend(residue[3])
+                    single_residue.extend(residue[2])
+
+                    if ((peptidasesList['PDB'] == single_residue[0]) & (
+                            peptidasesList['chain/kegg compound'] == single_residue[1]) & (
+                                peptidasesList['resid/chebi id'] == single_residue[2])).any():
+                        single_residue.append(1)
+                        pos = pos + 1
+                    else:
+                        single_residue.append(0)
+                        neg = neg + 1
+
+                    final_list.append(single_residue)
+
+        protein_end_time = datetime.now()
+        print(pdbID, " Duration: {}".format(protein_end_time - protein_start_time))
+
+    neighhor_df = pd.DataFrame(final_list)
+    neighhor_df.to_csv("./mid_result" + str(fold) + "0.csv")
+    print('  sub process %s finished  ' % fold)
+
+    print("total:", pos + neg)
+    print("pos:", pos)
+    print("neg:", neg)
+
+
+def threadCalc1(fold, protein_list):
+    neighhor_df = pd.DataFrame(columns=["proteinid", "chain", "aaid", "neighborid"])
     for eachRow in range(0, len(protein_list)):
         pdbID = protein_list[eachRow][0]
         chainOrder = protein_list[eachRow][1]
@@ -118,22 +228,22 @@ def chunks(l, m):
         yield l[i:i + n]
 
 
-thread_size = 50
+thread_size = 1
 protein_list = np.array(uniqueList).tolist()
-#kfold = StratifiedKFold(n_splits=thread_size, shuffle=False)
+# kfold = StratifiedKFold(n_splits=thread_size, shuffle=False)
 group_list = list(chunks(protein_list, thread_size))
 
 print('Parent process %s.' % os.getpid())
-#p = Pool()
+# p = Pool()
 
 for fold, fold_list in enumerate(group_list):
     print(fold)
     threadCalc(fold, fold_list)
-    #p.apply_async(threadCalc, args=(fold, fold_list))
+    # p.apply_async(threadCalc, args=(fold, fold_list))
 
 print('Waiting for all subprocesses done...')
-#p.close()
-#p.join()
+# p.close()
+# p.join()
 print('All subprocesses done.')
 
 end_time = datetime.now()
